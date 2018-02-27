@@ -36,12 +36,17 @@ let update x v s = fun y -> if x = y then v else s y
 let s = update "x" 1 @@ update "y" 2 @@ update "z" 3 @@ update "t" 4 empty
 
 (* Some testing; comment this definition out when submitting the solution. *)
+(*
 let _ =
   List.iter
     (fun x ->
        try  Printf.printf "%s=%d\n" x @@ s x
        with Failure s -> Printf.printf "%s\n" s
     ) ["x"; "a"; "y"; "z"; "t"; "b"]
+*)
+
+let itob i = i <> 0
+let btoi b = if b then 1 else 0
 
 (* Expression evaluator
 
@@ -50,5 +55,26 @@ let _ =
    Takes a state and an expression, and returns the value of the expression in 
    the given state.
 *)
-let eval = failwith "Not implemented yet"
+let rec eval st ex = match ex with
+  | Const c -> c
+  | Var x -> st x
+  | Binop ("+", e1, e2) -> eval st e1 + eval st e2
+  | Binop ("-", e1, e2) -> eval st e1 - eval st e2
+  | Binop ("*", e1, e2) -> eval st e1 * eval st e2
+  | Binop ("/", e1, e2) -> eval st e1 / eval st e2
+  | Binop ("%", e1, e2) -> eval st e1 mod eval st e2
+  | Binop (">", e1, e2) -> btoi ((eval st e1) > (eval st e2))
+  | Binop ("<", e1, e2) -> btoi ((eval st e1) < (eval st e2))
+  | Binop (">=", e1, e2) -> btoi ((eval st e1) >= (eval st e2))
+  | Binop ("<=", e1, e2) -> btoi ((eval st e1) <= (eval st e2))
+  | Binop ("==", e1, e2) -> btoi ((eval st e1) = (eval st e2))
+  | Binop ("!=", e1, e2) -> btoi ((eval st e1) <> (eval st e2))
+  | Binop ("&&", e1, e2) -> btoi ((itob @@ eval st e1) && (itob @@ eval st e2))
+  | Binop ("!!", e1, e2) -> btoi ((itob @@ eval st e1) || (itob @@ eval st e2))
+
+
+
+
+
+
                     
