@@ -1,4 +1,5 @@
-open GT       
+open GT
+
        
 (* The type for the stack machine instructions *)
 @type insn =
@@ -22,8 +23,24 @@ type config = int list * Syntax.Stmt.config
      val eval : config -> prg -> config
 
    Takes a configuration and a program, and returns a configuration as a result
- *)                         
-let eval _ = failwith "Not yet implemented"
+ *)   
+let eval conf pr =
+  let eval1 (stack, ((state, inp, out) as sConf)) instr = match instr with
+    | BINOP op -> (match stack with 
+      | (fst :: snd :: tail) ->
+        let res = (Syntax.Expr.eval state (Syntax.Expr.Binop (op, Syntax.Expr.Const fst, Syntax.Expr.Const snd))) in
+        ((res :: tail), sConf))
+    | CONST c -> (c :: stack, sConf)
+    | READ -> 
+      let (z :: inpTail) = inp in   
+      (z :: stack, (state, inpTail, out))
+    | WRITE -> (match stack with
+      | fst :: tail -> (tail, (state, inp, fst :: out)))
+    | LD var -> (state var :: stack, sConf)
+    | ST var -> (match stack with
+      | fst :: tail -> (tail, (Syntax.Expr.update var fst state, inp, out)))  
+  in
+  List.fold_left eval1 conf pr
 
 (* Top-level evaluation
 
@@ -40,5 +57,15 @@ let run i p = let (_, (_, _, o)) = eval ([], (Syntax.Expr.empty, i, [])) p in o
    Takes a program in the source language and returns an equivalent program for the
    stack machine
  *)
-
-let compile _ = failwith "Not yet implemented"
+let rec compile stmt =
+  let rec exprCompile expr = match expr with
+  | Syntax.Expr.Const c -> [CONST c]
+  | Syntax.Expr.Var var -> [LD var]
+  | Syntax.Expr.Binop (op, e1, e2) -> exprCompile e2 @ exprCompile e1 @ [BINOP op]
+  in
+  match stmt with
+  | Syntax.Stmt.Seq (stm1, stm2) -> compile stm1 @ compile stm2
+  | Syntax.Stmt.Assign (var, expr) -> exprCompile expr @ [ST var]
+  | Syntax.Stmt.Read var -> [READ; ST var]
+  | Syntax.Stmt.Write expr -> exprCompile expr @ [WRITE]
+ 
