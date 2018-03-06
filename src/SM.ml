@@ -20,25 +20,28 @@ type config = int list * Syntax.Stmt.config
 
 (* Stack machine interpreter
 
+f 0 = 1
+f n = n * f (n - 1)
+
      val eval : config -> prg -> config
 
    Takes a configuration and a program, and returns a configuration as a result
  *)   
 let eval conf pr =
-  let eval1 (stack, ((state, inp, out) as sConf)) instr = match instr with
-    | BINOP op -> (match stack with 
-      | (fst :: snd :: tail) ->
-        let res = (Syntax.Expr.eval state (Syntax.Expr.Binop (op, Syntax.Expr.Const fst, Syntax.Expr.Const snd))) in
-        ((res :: tail), sConf))
-    | CONST c -> (c :: stack, sConf)
-    | READ -> 
-      let (z :: inpTail) = inp in   
-      (z :: stack, (state, inpTail, out))
-    | WRITE -> (match stack with
-      | fst :: tail -> (tail, (state, inp, fst :: out)))
-    | LD var -> (state var :: stack, sConf)
-    | ST var -> (match stack with
-      | fst :: tail -> (tail, (Syntax.Expr.update var fst state, inp, out)))  
+  let eval1 (conf : config) (instr : insn) : config = match (conf, instr) with
+  | (fst :: snd :: tail, ((state, _, _) as sConf)), (BINOP op) ->
+    let res = (Syntax.Expr.eval state (Syntax.Expr.Binop (op, Syntax.Expr.Const fst, Syntax.Expr.Const snd))) in
+    ((res :: tail), sConf)
+  | (stack, sConf), (CONST c) ->
+    (c :: stack, sConf)
+  | (fst :: tail, (state, inp, out)), WRITE ->
+    (tail, (state, inp, fst :: out))
+  | (stack, (state, (z :: inpTail), out)), READ ->
+    (z :: stack, (state, inpTail, out))
+  | (stack, ((state, _, _) as sConf)), (LD var) ->
+    (state var :: stack, sConf)
+  | ((fst :: tail), (state, inp, out)), (ST var) ->
+    (tail, (Syntax.Expr.update var fst state, inp, out))  
   in
   List.fold_left eval1 conf pr
 
