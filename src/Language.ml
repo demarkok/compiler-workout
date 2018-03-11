@@ -44,7 +44,30 @@ module Expr =
        Takes a state and an expression, and returns the value of the expression in 
        the given state.
     *)
-    let eval _ = failwith "Not implemented yet"
+
+    (* TODO: extract binop evaluation *)
+    let itob i = i <> 0
+    let btoi b = if b then 1 else 0
+
+
+
+    let rec eval st ex = match ex with
+      | Const c -> c
+      | Var var -> st var
+      | Binop ("+", e1, e2) -> eval st e1 + eval st e2
+      | Binop ("-", e1, e2) -> eval st e1 - eval st e2
+      | Binop ("*", e1, e2) -> eval st e1 * eval st e2
+      | Binop ("/", e1, e2) -> eval st e1 / eval st e2
+      | Binop ("%", e1, e2) -> eval st e1 mod eval st e2
+      | Binop (">", e1, e2) -> btoi ((eval st e1) > (eval st e2))
+      | Binop ("<", e1, e2) -> btoi ((eval st e1) < (eval st e2))
+      | Binop (">=", e1, e2) -> btoi ((eval st e1) >= (eval st e2))
+      | Binop ("<=", e1, e2) -> btoi ((eval st e1) <= (eval st e2))
+      | Binop ("==", e1, e2) -> btoi ((eval st e1) = (eval st e2))
+      | Binop ("!=", e1, e2) -> btoi ((eval st e1) <> (eval st e2))
+      | Binop ("&&", e1, e2) -> btoi ((itob @@ eval st e1) && (itob @@ eval st e2))
+      | Binop ("!!", e1, e2) -> btoi ((itob @@ eval st e1) || (itob @@ eval st e2))
+    
 
     (* Expression parser. You can use the following terminals:
 
@@ -52,8 +75,26 @@ module Expr =
          DECIMAL --- a decimal constant [0-9]+ as a string
    
     *)
+
+    let opList2ExprOstapList opList = List.map (fun s -> (ostap($(s)), fun x y -> Binop (s, x, y))) opList
+
     ostap (
-      parse: empty {failwith "Not implemented yet"}
+      expr:
+        !(Ostap.Util.expr
+           (fun x -> x)
+           [|
+             `Lefta , opList2ExprOstapList ["!!"];
+             `Lefta , opList2ExprOstapList ["&&"];
+             `Nona  , opList2ExprOstapList ["!="; "=="; "<="; ">="; "<"; ">"];
+             `Lefta , opList2ExprOstapList ["+"; "-"];
+             `Lefta , opList2ExprOstapList ["*"; "/"; "%"]
+           |]
+           primary
+         );
+
+      primary: x:IDENT {Var x} | n:DECIMAL {Const n} | -"(" expr -")";
+      
+      parse: expr
     )
 
   end
@@ -78,12 +119,31 @@ module Stmt =
 
        Takes a configuration and a statement, and returns another configuration
     *)
-    let eval _ = failwith "Not implemented yet"
+    let rec eval ((state, inp, out) as conf) stm = match stm with
+      | Seq (stm1, stm2) -> eval (eval conf stm1) stm2
+      | Assign (var, expr) -> (Expr.update var (Expr.eval state expr) state, inp, out)
+      | Read var -> (Expr.update var (List.hd inp) state, List.tl inp, out)
+      | Write expr -> (state, inp, out @ [(Expr.eval state expr)])
 
     (* Statement parser *)
     ostap (
-      parse: empty {failwith "Not implemented yet"}
+      simple_stmt:
+        x:IDENT ":=" e:!(Expr.expr)     {Assign (x, e)}
+      | "read"  "(" x:IDENT     ")"  {Read x}
+      | "write" "(" e:!(Expr.expr) ")"  {Write e};
+
+      stmt: 
+        !(Ostap.Util.expr
+          (fun x -> x)
+          [|
+            `Lefta , [ostap (";"), (fun x y -> Seq (x, y))]
+          |]
+          simple_stmt
+        );
+
+      parse: stmt
     )
+
       
   end
 
@@ -100,3 +160,6 @@ type t = Stmt.t
 *)
 let eval p i =
   let _, _, o = Stmt.eval (Expr.empty, i, []) p in o
+
+(* Top-level parser *)
+let parse = Stmt.parse                                                     
