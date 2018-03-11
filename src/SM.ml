@@ -27,12 +27,12 @@ type config = int list * Stmt.config
 let eval conf pr =
   let eval1 (conf : config) (instr : insn) : config = match (conf, instr) with
   | (fst :: snd :: tail, ((state, _, _) as sConf)), (BINOP op) ->
-    let res = (Language.Expr.eval state (Language.Expr.Binop (op, Language.Expr.Const fst, Language.Expr.Const snd))) in
+    let res = (Language.Expr.eval state (Language.Expr.Binop (op, Language.Expr.Const snd, Language.Expr.Const fst))) in
     ((res :: tail), sConf)
   | (stack, sConf), (CONST c) ->
     (c :: stack, sConf)
   | (fst :: tail, (state, inp, out)), WRITE ->
-    (tail, (state, inp, fst :: out))
+    (tail, (state, inp, out @ [fst]))
   | (stack, (state, (z :: inpTail), out)), READ ->
     (z :: stack, (state, inpTail, out))
   | (stack, ((state, _, _) as sConf)), (LD var) ->
@@ -60,7 +60,7 @@ let rec compile stmt =
   let rec exprCompile expr = match expr with
   | Language.Expr.Const c -> [CONST c]
   | Language.Expr.Var var -> [LD var]
-  | Language.Expr.Binop (op, e1, e2) -> exprCompile e2 @ exprCompile e1 @ [BINOP op]
+  | Language.Expr.Binop (op, e1, e2) -> exprCompile e1 @ exprCompile e2 @ [BINOP op]
   in
   match stmt with
   | Language.Stmt.Seq (stm1, stm2) -> compile stm1 @ compile stm2
