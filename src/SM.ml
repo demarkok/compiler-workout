@@ -35,7 +35,7 @@ let eval conf pr =
   | (stack, sConf), (CONST c) ->
     (c :: stack, sConf)
   | (fst :: tail, (state, inp, out)), WRITE ->
-    (tail, (state, inp, fst :: out))
+    (tail, (state, inp, out @ [fst]))
   | (stack, (state, (z :: inpTail), out)), READ ->
     (z :: stack, (state, inpTail, out))
   | (stack, ((state, _, _) as sConf)), (LD var) ->
