@@ -43,32 +43,31 @@ module Expr =
  
        Takes a state and an expression, and returns the value of the expression in 
        the given state.
-     *)                                                       
-    let to_func op =
-      let bti   = function true -> 1 | _ -> 0 in
-      let itb b = b <> 0 in
-      let (|>) f g   = fun x y -> f (g x y) in
-      match op with
-      | "+"  -> (+)
-      | "-"  -> (-)
-      | "*"  -> ( * )
-      | "/"  -> (/)
-      | "%"  -> (mod)
-      | "<"  -> bti |> (< )
-      | "<=" -> bti |> (<=)
-      | ">"  -> bti |> (> )
-      | ">=" -> bti |> (>=)
-      | "==" -> bti |> (= )
-      | "!=" -> bti |> (<>)
-      | "&&" -> fun x y -> bti (itb x && itb y)
-      | "!!" -> fun x y -> bti (itb x || itb y)
-      | _    -> failwith (Printf.sprintf "Unknown binary operator %s" op)    
+    *)
+
+    (* TODO: extract binop evaluation *)
+    let itob i = i <> 0
+    let btoi b = if b then 1 else 0
+
+
+
+    let rec eval st ex = match ex with
+      | Const c -> c
+      | Var var -> st var
+      | Binop ("+", e1, e2) -> eval st e1 + eval st e2
+      | Binop ("-", e1, e2) -> eval st e1 - eval st e2
+      | Binop ("*", e1, e2) -> eval st e1 * eval st e2
+      | Binop ("/", e1, e2) -> eval st e1 / eval st e2
+      | Binop ("%", e1, e2) -> eval st e1 mod eval st e2
+      | Binop (">", e1, e2) -> btoi ((eval st e1) > (eval st e2))
+      | Binop ("<", e1, e2) -> btoi ((eval st e1) < (eval st e2))
+      | Binop (">=", e1, e2) -> btoi ((eval st e1) >= (eval st e2))
+      | Binop ("<=", e1, e2) -> btoi ((eval st e1) <= (eval st e2))
+      | Binop ("==", e1, e2) -> btoi ((eval st e1) = (eval st e2))
+      | Binop ("!=", e1, e2) -> btoi ((eval st e1) <> (eval st e2))
+      | Binop ("&&", e1, e2) -> btoi ((itob @@ eval st e1) && (itob @@ eval st e2))
+      | Binop ("!!", e1, e2) -> btoi ((itob @@ eval st e1) || (itob @@ eval st e2))
     
-    let rec eval st expr =      
-      match expr with
-      | Const n -> n
-      | Var   x -> st x
-      | Binop (op, x, y) -> to_func op (eval st x) (eval st y)
 
     (* Expression parser. You can use the following terminals:
 
@@ -76,8 +75,26 @@ module Expr =
          DECIMAL --- a decimal constant [0-9]+ as a string
                                                                                                                   
     *)
-    ostap (                                      
-      parse: empty {failwith "Not yet implemented"}
+
+    let opList2ExprOstapList opList = List.map (fun s -> (ostap($(s)), fun x y -> Binop (s, x, y))) opList
+
+    ostap (
+      expr:
+        !(Ostap.Util.expr
+           (fun x -> x)
+           [|
+             `Lefta , opList2ExprOstapList ["!!"];
+             `Lefta , opList2ExprOstapList ["&&"];
+             `Nona  , opList2ExprOstapList ["!="; "=="; "<="; ">="; "<"; ">"];
+             `Lefta , opList2ExprOstapList ["+"; "-"];
+             `Lefta , opList2ExprOstapList ["*"; "/"; "%"]
+           |]
+           primary
+         );
+
+      primary: x:IDENT {Var x} | n:DECIMAL {Const n} | -"(" expr -")";
+      
+      parse: expr
     )
     
   end
@@ -102,17 +119,31 @@ module Stmt =
 
        Takes a configuration and a statement, and returns another configuration
     *)
-    let rec eval ((st, i, o) as conf) stmt =
-      match stmt with
-      | Read    x       -> (match i with z::i' -> (Expr.update x z st, i', o) | _ -> failwith "Unexpected end of input")
-      | Write   e       -> (st, i, o @ [Expr.eval st e])
-      | Assign (x, e)   -> (Expr.update x (Expr.eval st e) st, i, o)
-      | Seq    (s1, s2) -> eval (eval conf s1) s2
-                                
+    let rec eval ((state, inp, out) as conf) stm = match stm with
+      | Seq (stm1, stm2) -> eval (eval conf stm1) stm2
+      | Assign (var, expr) -> (Expr.update var (Expr.eval state expr) state, inp, out)
+      | Read var -> (Expr.update var (List.hd inp) state, List.tl inp, out)
+      | Write expr -> (state, inp, out @ [(Expr.eval state expr)])
+
     (* Statement parser *)
     ostap (
-      parse: empty {failwith "Not yet implemented"}
+      simple_stmt:
+        x:IDENT ":=" e:!(Expr.expr)     {Assign (x, e)}
+      | "read"  "(" x:IDENT     ")"  {Read x}
+      | "write" "(" e:!(Expr.expr) ")"  {Write e};
+
+      stmt: 
+        !(Ostap.Util.expr
+          (fun x -> x)
+          [|
+            `Lefta , [ostap (";"), (fun x y -> Seq (x, y))]
+          |]
+          simple_stmt
+        );
+
+      parse: stmt
     )
+
       
   end
 
