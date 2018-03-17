@@ -126,7 +126,7 @@ let rec compile env = function
         | "/"             -> [Mov (x, eax); Cltd; IDiv y; Mov (eax, z)] 
         | "%"             -> [Mov (x, eax); Cltd; IDiv y; Mov (edx, z)]
         | "+" | "-" | "*" -> [Mov (x, eax); Binop (op, y, eax); Mov (eax, z)]
-        | "&&" | "!!" -> [Mov (x, eax); Mov (y, edx)] @ toBit eax @ toBit edx @ [Binop (op, edx, eax); Mov (eax, z)]
+        | "&&" | "!!" -> [Mov (x, edi); Mov (y, edx)] @ toBit edi @ toBit edx @ [Binop (op, edx, edi); Mov (edi, z)]
         | _ -> match opSuff op with
           | Some suff -> [Mov (x, eax); Binop ("cmp", y, eax); Mov (L 0, edx); Set (suff, "%dl"); Mov (edx, z)]
           | _         -> failwith "unknown binary operator"
