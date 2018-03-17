@@ -80,7 +80,60 @@ open SM
    Take an environment, a stack machine program, and returns a pair --- the updated environment and the list
    of x86 instructions
 *)
-let compile env code = failwith "Not yet implemented"
+
+let safeMove a b = match a, b with
+| R i, _   ->  [Mov (a, b)]
+| _, R i -> [Mov (a, b)]
+| _, _  -> [Mov (a, eax); Mov (eax, b)]
+
+
+let opSuff = function
+| ">"  -> Some "g"
+| ">=" -> Some "ge"
+| "<"  -> Some "l"
+| "<=" -> Some "le"
+| "==" -> Some "e"
+| "!=" -> Some "ne"
+| _ -> None
+
+let toBit x = 
+  [Binop ("cmp", L 0, x); Mov (L 0, eax); Set ("ne", "%al"); Mov (eax, x)]
+
+let rec compile env = function
+| [] -> env, []
+| instr :: code ->
+  let env, asm = 
+    match instr with
+    | CONST n ->
+        let x, env = env#allocate in    
+        env, [Mov (L n, x)]
+    | LD x ->
+        let y, env = (env#global x)#allocate in
+        env, safeMove (M (env#loc x)) y
+    | ST x ->
+        let y, env = (env#global x)#pop in 
+        env, safeMove y (M (env#loc x))
+    | WRITE ->
+        let x, env = env#pop in
+        env, [Push x; Call "Lwrite"; Pop eax]
+    | READ ->
+        let x, env = env#allocate in
+        env, [Call "Lread"; Mov (eax, x)]
+    | BINOP op ->
+        let y, x, env = env#pop2 in
+        let z, env = env#allocate in 
+        env, match op with
+        | "/"             -> [Mov (x, eax); Cltd; IDiv y; Mov (eax, z)] 
+        | "%"             -> [Mov (x, eax); Cltd; IDiv y; Mov (edx, z)]
+        | "+" | "-" | "*" -> [Mov (x, eax); Binop (op, y, eax); Mov (eax, z)]
+        | "&&" | "!!" -> [Mov (x, eax); Mov (y, edx)] @ toBit eax @ toBit edx @ [Binop (op, edx, eax); Mov (eax, z)]
+        | _ -> match opSuff op with
+          | Some suff -> [Mov (x, eax); Binop ("cmp", y, eax); Mov (L 0, edx); Set (suff, "%dl"); Mov (edx, z)]
+          | _         -> failwith "unknown binary operator"
+
+    in
+    let env, asm' = compile env code in
+    env, asm @ asm'
 
 (* A set of strings *)           
 module S = Set.Make (String)
