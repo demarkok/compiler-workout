@@ -86,7 +86,6 @@ let safeMove a b = match a, b with
 | _, R i -> [Mov (a, b)]
 | _, _  -> [Mov (a, eax); Mov (eax, b)]
 
-
 let opSuff = function
 | ">"  -> Some "g"
 | ">=" -> Some "ge"
@@ -126,11 +125,10 @@ let rec compile env = function
         | "/"             -> [Mov (x, eax); Cltd; IDiv y; Mov (eax, z)] 
         | "%"             -> [Mov (x, eax); Cltd; IDiv y; Mov (edx, z)]
         | "+" | "-" | "*" -> [Mov (x, eax); Binop (op, y, eax); Mov (eax, z)]
-        | "&&" | "!!" -> [Mov (x, edi); Mov (y, edx)] @ toBit edi @ toBit edx @ [Binop (op, edx, edi); Mov (edi, z)]
+        | "&&" | "!!" -> toBit x @ toBit y @ [Mov (y, edx); Binop (op, x, edx); Mov (edx, z)] (* Not quite safe: x and y are spoiled*)
         | _ -> match opSuff op with
           | Some suff -> [Mov (x, eax); Binop ("cmp", y, eax); Mov (L 0, edx); Set (suff, "%dl"); Mov (edx, z)]
           | _         -> failwith "unknown binary operator"
-
     in
     let env, asm' = compile env code in
     env, asm @ asm'
