@@ -151,8 +151,8 @@ module Stmt =
       | "read"  "(" x:IDENT     ")"     {Read x}
       | "write" "(" e:!(Expr.expr) ")"  {Write e}
       | %"skip"                         {Skip}
-      | %"if" cond:!(Expr.expr)  
-        %"then" thenBranch:stmt
+      | %"if" cond:!(Expr.expr) %"then" 
+          thenBranch:stmt
         elifBranches:(%"elif" !(Expr.expr) %"then" stmt)*
         elseBranch:(%"else" stmt)?
         %"fi"                           {If (cond, 
@@ -160,10 +160,14 @@ module Stmt =
                                              List.fold_right (fun (c, b) e -> If (c, b, e)) elifBranches (default Skip elseBranch))
                                         }     
       | %"while" cond:!(Expr.expr) %"do"
-        body:stmt
+          body:stmt
         %"od"                           {While (cond, body)}
-      | %"repeat" body:stmt %"until" cond:!(Expr.expr)
-                                        {Repeat (body, cond)};
+      | %"repeat" 
+          body:stmt 
+        %"until" cond:!(Expr.expr)      {Repeat (body, cond)}
+      | %"for" init:stmt "," cond:!(Expr.expr) "," update:stmt %"do"
+          body: stmt
+        %"od"                           {Seq (init, While (cond, Seq (body, update)))};
       stmt: 
         !(Ostap.Util.expr
           (fun x -> x)
