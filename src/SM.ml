@@ -120,3 +120,10 @@ let rec compile stmt =
  		[LABEL beginLabel] @
  		exprCompile cond @
  		[CJMP ("nz", loopLabel)]
+ 	| Language.Stmt.Repeat (body, cond) ->
+ 		let loopLabel = nameGenerator#getName in
+ 		[LABEL loopLabel] @
+ 		compile body @
+ 		exprCompile cond @
+ 		[CJMP ("z", loopLabel)]
+

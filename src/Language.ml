@@ -111,7 +111,7 @@ module Stmt =
     (* empty statement                  *) | Skip
     (* conditional                      *) | If     of Expr.t * t * t
     (* loop with a pre-condition        *) | While  of Expr.t * t
-    (* loop with a post-condition       *) (* add yourself *)  with show
+    (* loop with a post-condition       *) | Repeat of t * Expr.t  with show
                                                                     
     (* The type of configuration: a state, an input stream, an output stream *)
     type config = Expr.state * int list * int list 
@@ -136,9 +136,13 @@ module Stmt =
       | If (cond, thenBranch, elseBranch) -> (match (Expr.eval state cond) != 0 with
         | true -> eval conf thenBranch
         | false -> eval conf elseBranch)
-      | (While (cond, body)) as loop -> match (Expr.eval state cond) != 0 with
+      | (While (cond, body)) as loop -> (match (Expr.eval state cond) != 0 with
         | true -> eval (eval conf body) loop
-        | false -> conf
+        | false -> conf)
+      | Repeat (body, cond) -> 
+        let afterBody = eval conf body in
+        eval afterBody (While ((Binop("==", cond, Const 0)), body)) (*not sure if it's a good idea*)
+        
 
     (* Statement parser *)
     ostap (
@@ -157,7 +161,9 @@ module Stmt =
                                         }     
       | %"while" cond:!(Expr.expr) %"do"
         body:stmt
-        %"od"                           {While (cond, body)};
+        %"od"                           {While (cond, body)}
+      | %"repeat" body:stmt %"until" cond:!(Expr.expr)
+                                        {Repeat (body, cond)};
       stmt: 
         !(Ostap.Util.expr
           (fun x -> x)
@@ -187,4 +193,4 @@ let eval p i =
   let _, _, o = Stmt.eval (Expr.empty, i, []) p in o
 
 (* Top-level parser *)
-let parse = Stmt.parse                                                     
+let parse = Stmt.parse                                                   
