@@ -44,7 +44,29 @@ module Expr =
        Takes a state and an expression, and returns the value of the expression in 
        the given state.
     *)                                                       
-    let eval st expr = failwith "Not yet implemented"
+
+    (* TODO: extract binop evaluation *)
+    let itob i = i <> 0
+    let btoi b = if b then 1 else 0
+
+
+    let rec eval st ex = match ex with
+      | Const c -> c
+      | Var var -> st var
+      | Binop ("+", e1, e2) -> eval st e1 + eval st e2
+      | Binop ("-", e1, e2) -> eval st e1 - eval st e2
+      | Binop ("*", e1, e2) -> eval st e1 * eval st e2
+      | Binop ("/", e1, e2) -> eval st e1 / eval st e2
+      | Binop ("%", e1, e2) -> eval st e1 mod eval st e2
+      | Binop (">", e1, e2) -> btoi ((eval st e1) > (eval st e2))
+      | Binop ("<", e1, e2) -> btoi ((eval st e1) < (eval st e2))
+      | Binop (">=", e1, e2) -> btoi ((eval st e1) >= (eval st e2))
+      | Binop ("<=", e1, e2) -> btoi ((eval st e1) <= (eval st e2))
+      | Binop ("==", e1, e2) -> btoi ((eval st e1) = (eval st e2))
+      | Binop ("!=", e1, e2) -> btoi ((eval st e1) <> (eval st e2))
+      | Binop ("&&", e1, e2) -> btoi ((itob @@ eval st e1) && (itob @@ eval st e2))
+      | Binop ("!!", e1, e2) -> btoi ((itob @@ eval st e1) || (itob @@ eval st e2))
+
 
     (* Expression parser. You can use the following terminals:
 
@@ -52,8 +74,26 @@ module Expr =
          DECIMAL --- a decimal constant [0-9]+ as a string
                                                                                                                   
     *)
-    ostap (                                      
-      parse: empty {failwith "Not yet implemented"}
+
+    let opList2ExprOstapList opList = List.map (fun s -> (ostap($(s)), fun x y -> Binop (s, x, y))) opList
+
+    ostap (
+      expr:
+        !(Ostap.Util.expr
+           (fun x -> x)
+           [|
+             `Lefta , opList2ExprOstapList ["!!"];
+             `Lefta , opList2ExprOstapList ["&&"];
+             `Nona  , opList2ExprOstapList ["!="; "=="; "<="; ">="; "<"; ">"];
+             `Lefta , opList2ExprOstapList ["+"; "-"];
+             `Lefta , opList2ExprOstapList ["*"; "/"; "%"]
+           |]
+           primary
+         );
+
+      primary: x:IDENT {Var x} | n:DECIMAL {Const n} | -"(" expr -")";
+      
+      parse: expr
     )
     
   end
@@ -82,12 +122,53 @@ module Stmt =
 
        Takes a configuration and a statement, and returns another configuration
     *)
-    let rec eval conf stmt = failwith "Not yet implemented"
-                               
+
+    let default y = function
+    | Some x -> x
+    | None -> y
+
+    let rec eval ((state, inp, out) as conf) stm = match stm with
+      | Seq (stm1, stm2) -> eval (eval conf stm1) stm2
+      | Assign (var, expr) -> (Expr.update var (Expr.eval state expr) state, inp, out)
+      | Read var -> (Expr.update var (List.hd inp) state, List.tl inp, out)
+      | Write expr -> (state, inp, out @ [(Expr.eval state expr)])
+      | Skip -> conf
+      | If (cond, thenBranch, elseBranch) -> (match (Expr.eval state cond) != 0 with
+        | true -> eval conf thenBranch
+        | false -> eval conf elseBranch)
+      | (While (cond, body)) as loop -> match (Expr.eval state cond) != 0 with
+        | true -> eval (eval conf body) loop
+        | false -> conf
+
     (* Statement parser *)
     ostap (
-      parse: empty {failwith "Not yet implemented"}
+      simple_stmt:
+        x:IDENT ":=" e:!(Expr.expr)     {Assign (x, e)}
+      | "read"  "(" x:IDENT     ")"     {Read x}
+      | "write" "(" e:!(Expr.expr) ")"  {Write e}
+      | %"skip"                         {Skip}
+      | %"if" cond:!(Expr.expr)  
+        %"then" thenBranch:stmt
+        elifBranches:(%"elif" !(Expr.expr) %"then" stmt)*
+        elseBranch:(%"else" stmt)?
+        %"fi"                           {If (cond, 
+                                             thenBranch, 
+                                             List.fold_right (fun (c, b) e -> If (c, b, e)) elifBranches (default Skip elseBranch))
+                                        }     
+      | %"while" cond:!(Expr.expr) %"do"
+        body:stmt
+        %"od"                           {While (cond, body)};
+      stmt: 
+        !(Ostap.Util.expr
+          (fun x -> x)
+          [|
+            `Lefta , [ostap (";"), (fun x y -> Seq (x, y))]
+          |]
+          simple_stmt
+        );      
+      parse: stmt
     )
+
       
   end
 
