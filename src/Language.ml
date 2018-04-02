@@ -14,25 +14,35 @@ module State =
     (* State: global state, local state, scope variables *)
     type t = {g : string -> int; l : string -> int; scope : string list}
 
+    let emptyOld x = failwith (Printf.sprintf "Undefined variable %s" x)
+
     (* Empty state *)
-    let empty = failwith "Not implemented"
+    let empty = {g = emptyOld; l = emptyOld; scope = []}
 
     (* Update: non-destructively "modifies" the state s by binding the variable x 
        to value v and returns the new state w.r.t. a scope
     *)
-    let update x v s = failwith "Not implemented"
-                                
+    let update x v {g; l; scope} =
+      let update' x' v' s' = fun y -> if x' = y then v' else s' y in
+      match (List.mem x scope) with
+        | false -> {g = update' x v g; l = l; scope = scope}
+        | true  -> {g = g; l = update' x v l; scope = scope}
+                                 
     (* Evals a variable in a state w.r.t. a scope *)
-    let eval s x = failwith "Not implemented" 
+    let eval {g; l; scope} x = 
+      match (List.mem x scope) with
+      | false -> g x
+      | true  -> l x
 
     (* Creates a new scope, based on a given state *)
-    let enter st xs = failwith "Not implemented"
+    let enter {g; _; _} xs = {g = g; l = emptyOld; scope = xs}
+
 
     (* Drops a scope *)
-    let leave st st' = failwith "Not implemented"
+    let leave {_; l; scope} {g; _; _} = {g; l; scope}
 
   end
-    
+
 (* Simple expressions: syntax and semantics *)
 module Expr =
   struct
