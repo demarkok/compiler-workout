@@ -120,10 +120,31 @@ module Expr =
          IDENT   --- a non-empty identifier a-zA-Z[a-zA-Z0-9_]* as a string
          DECIMAL --- a decimal constant [0-9]+ as a string                                                                                                                  
     *)
-    ostap (                                      
-      parse: empty {failwith "Not implemented"}
-    )
+    let opList2ExprOstapList opList = List.map (fun s -> (ostap($(s)), fun x y -> Binop (s, x, y))) opList
     
+    ostap (
+      expr:
+        !(Ostap.Util.expr
+           (fun x -> x)
+           [|
+             `Lefta , opList2ExprOstapList ["!!"];
+             `Lefta , opList2ExprOstapList ["&&"];
+             `Nona  , opList2ExprOstapList ["!="; "=="; "<="; ">="; "<"; ">"];
+             `Lefta , opList2ExprOstapList ["+"; "-"];
+             `Lefta , opList2ExprOstapList ["*"; "/"; "%"]
+           |]
+           primary
+         );
+
+      primary: 
+        x:IDENT {Var x} 
+      | n:DECIMAL {Const n} 
+      | name:IDENT "(" args:!(expr)* ")" { Call (name, args) }
+      | -"(" expr -")";
+                                        
+      
+      parse: expr
+    )
   end
                     
 (* Simple statements: syntax and sematics *)
