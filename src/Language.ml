@@ -6,6 +6,7 @@ open GT
 (* Opening a library for combinator-based syntax analysis *)
 open Ostap
 open Combinators
+(* open Option *)
                          
 (* States *)
 module State =
@@ -95,8 +96,25 @@ module Expr =
        which takes an environment (of the same type), a name of the function, a list of actual parameters and a configuration, 
        an returns a pair: the return value for the call and the resulting configuration
     *)                                                       
-    let rec eval env ((st, i, o, r) as conf) expr = failwith "Not implemented"
-         
+    let rec eval env ((st, i, o, r) as conf) expr = match expr with
+      | Const c             -> (st, i, o, c)
+      | Var x               -> (st, i, o, State.eval st x)
+      | Binop (op, e1, e2)  ->
+        let ((_, _, _, r1) as conf')  = eval env conf  e1 in
+        let (st'', i'', o'', r2)      = eval env conf' e2 in
+        (st'', i'', o'', evalBinop op r1 r2)
+      | Call (f, es)        -> 
+        let (c, vs) = List.fold_left 
+          (fun (c, vs) e -> 
+            let ((_, _, _, v) as c') = eval env c e in
+            (* let Some v_int = v in *)
+            (c', vs @ [v]))
+          (conf, []) 
+          es
+        in
+        env#definition env f vs c 
+
+        
     (* Expression parser. You can use the following terminals:
 
          IDENT   --- a non-empty identifier a-zA-Z[a-zA-Z0-9_]* as a string
