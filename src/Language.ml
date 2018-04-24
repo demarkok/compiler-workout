@@ -60,7 +60,28 @@ module Expr =
 
     (* The type of configuration: a state, an input stream, an output stream, an optional value *)
     type config = State.t * int list * int list * int option
-                                                            
+                                             
+
+    let itob i = i <> 0
+    let btoi b = if b then 1 else 0
+
+    (* string -> int -> int -> int *)
+    let evalBinop op e1 e2 = match op with
+      |"+" -> e1 + e2
+      |"-" -> e1 - e2
+      |"*" -> e1 * e2
+      |"/" -> e1 / e2
+      |"%" -> e1 mod e2
+      |">" -> btoi (e1 > e2)
+      |"<" -> btoi (e1 < e2)
+      |">=" -> btoi (e1 >= e2)
+      |"<=" -> btoi (e1 <= e2)
+      |"==" -> btoi (e1 = e2)
+      |"!=" -> btoi (e1 <> e2)
+      |"&&" -> btoi ((itob e1) && (itob e2))
+      |"!!" -> btoi ((itob e1) || (itob e2))
+ 
+
     (* Expression evaluator
 
           val eval : env -> config -> t -> int * config
