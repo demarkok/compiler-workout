@@ -97,22 +97,23 @@ module Expr =
        an returns a pair: the return value for the call and the resulting configuration
     *)                                                       
     let rec eval env ((st, i, o, r) as conf) expr = match expr with
-      | Const c             -> (st, i, o, c)
-      | Var x               -> (st, i, o, State.eval st x)
+      | Const c             -> c, (st, i, o, Some c)
+      | Var x               -> let v = State.eval st x in v, (st, i, o, Some v)
       | Binop (op, e1, e2)  ->
-        let ((_, _, _, r1) as conf')  = eval env conf  e1 in
-        let (st'', i'', o'', r2)      = eval env conf' e2 in
-        (st'', i'', o'', evalBinop op r1 r2)
+        let r1, conf'               = eval env conf e1 in
+        let r2, (st'', i'', o'', _) = eval env conf' e2 in
+        let result                  = evalBinop op r1 r2 in
+        result, (st'', i'', o'', Some result)
       | Call (f, es)        -> 
         let (c, vs) = List.fold_left 
           (fun (c, vs) e -> 
-            let ((_, _, _, v) as c') = eval env c e in
-            (* let Some v_int = v in *)
+            let v, c' = eval env c e in
             (c', vs @ [v]))
           (conf, []) 
           es
         in
-        env#definition env f vs c 
+        let ((_, _, _, Some result) as c) = env#definition env f vs c in 
+        result, c
 
         
     (* Expression parser. You can use the following terminals:
