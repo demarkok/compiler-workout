@@ -7,6 +7,11 @@ open GT
 open Ostap
 open Combinators
                 
+
+let default y = function
+| Some x -> x
+| None -> y
+
 (* States *)
 module State =
   struct
@@ -139,9 +144,9 @@ module Expr =
          );
 
       primary: 
-        x:IDENT {Var x} 
+        name:IDENT "(" args:!(Ostap.Util.list0)[expr] ")" { Call (name, args) }
+      | x:IDENT {Var x} 
       | n:DECIMAL {Const n} 
-      | name:IDENT "(" args:!(expr)* ")" { Call (name, args) }
       | -"(" expr -")";
                                         
       
@@ -180,43 +185,77 @@ module Stmt =
         | Skip -> a
         | _ -> Seq (a, b)
       in
+      (* Printf.printf "%s\n" (GT.transform(t) (new @t[show]) () stmt); *)
       match stmt with
-      | Read  var                         -> 
-        let (x :: tl) = i in
-        eval env (State.update var x st, tl, o, None) Skip k
-      | Write expr                        -> 
-        let v, (st', i', o', _) = Expr.eval env conf expr in
-        eval env (st', i', o' @ [v], None) Skip k
-      | Assign (var, expr)                ->
-        let v, (st', i', o', _) = Expr.eval env conf expr in
-        eval env (State.update var v st', i', o', None) Skip k
-      | Seq (stm1, stm2)                  ->
-        eval env conf (stm2 <|> k) stm1
-      | Skip -> match k with
-        | Skip  -> conf
-        | _     -> eval env conf Skip k
-      | If (cond, thenBranch, elseBranch) -> (match (Expr.eval env conf cond) with
-        | 1, (st', i', o', _) -> eval env (st', i', o', None) k thenBranch
-        | 0, (st', i', o', _) -> eval env (st', i', o', None) k elseBranch
+        | Read  var                         -> 
+          let (x :: tl) = i in
+          eval env (State.update var x st, tl, o, None) Skip k
+        | Write expr                        -> 
+          let v, (st', i', o', _) = Expr.eval env conf expr in
+          eval env (st', i', o' @ [v], None) Skip k
+        | Assign (var, expr)                ->
+          let v, (st', i', o', _) = Expr.eval env conf expr in
+          eval env (State.update var v st', i', o', None) Skip k
+        | Seq (stm1, stm2)                  ->
+          eval env conf (stm2 <|> k) stm1
+        | Skip                              -> (match k with
+          | Skip  -> conf
+          | _     -> eval env conf Skip k
         )
-      | (While (cond, body)) as loop      -> (match (Expr.eval env conf cond) with
-        | 1, (st', i', o', _) -> eval env (st', i', o', None) (loop <|> k) body
-        | 0, (st', i', o', _) -> eval env (st', i', o', None)  Skip        k
-      )
-      | Repeat (body, cond)               -> 
-        eval env conf ((While (Binop ("==", cond, Const 0), body)) <|> k) body
-      | Return mbResult                   -> (match mbResult with
-        | Some expr -> let (_, c') = Expr.eval env conf expr in c'
-        | None      -> conf
-      )
-      | Call (f, args)                    -> 
-        let (c, vs) = Expr.eval_list env conf args in
-        eval env (env#definition env f vs c) Skip k
-
+        | If (cond, thenBranch, elseBranch) -> (match (Expr.eval env conf cond) with
+          | 1, (st', i', o', _) -> eval env (st', i', o', None) k thenBranch
+          | 0, (st', i', o', _) -> eval env (st', i', o', None) k elseBranch
+          )
+        | (While (cond, body)) as loop      -> (match (Expr.eval env conf cond) with
+          | 1, (st', i', o', _) -> eval env (st', i', o', None) (loop <|> k) body
+          | 0, (st', i', o', _) -> eval env (st', i', o', None)  Skip        k
+        )
+        | Repeat (body, cond)               -> 
+          eval env conf ((While (Binop ("==", cond, Const 0), body)) <|> k) body
+        | Return mbResult                   -> (match mbResult with
+          | Some expr -> let (_, c') = Expr.eval env conf expr in c'
+          | None      -> conf
+        )
+        | Call (f, args)                    -> 
+          let (c, vs) = Expr.eval_list env conf args in
+          eval env (env#definition env f vs c) Skip k 
  
     (* Statement parser *)
     ostap (
-      parse: empty {failwith "Not implemented"}
+      simple_stmt:
+        x:IDENT ":=" e:!(Expr.expr)     { Assign (x, e) }
+      | "read"  "(" x:IDENT     ")"     { Read x }
+      | "write" "(" e:!(Expr.expr) ")"  { Write e }
+      | %"skip"                         { Skip }
+      | %"if" cond:!(Expr.expr) %"then" 
+          thenBranch:stmt
+        elifBranches:(%"elif" !(Expr.expr) %"then" stmt)*
+        elseBranch:(%"else" stmt)?
+        %"fi"                           { If (cond, 
+                                             thenBranch, 
+                                             List.fold_right (fun (c, b) e -> If (c, b, e)) elifBranches (default Skip elseBranch))
+                                        }     
+      | %"while" cond:!(Expr.expr) %"do"
+          body:stmt
+        %"od"                           { While (cond, body) }
+      | %"repeat" 
+          body:stmt 
+        %"until" cond:!(Expr.expr)      { Repeat (body, cond) }
+      | %"for" init:stmt "," cond:!(Expr.expr) "," update:stmt %"do"
+          body:stmt
+        %"od"                           { Seq (init, While (cond, Seq (body, update))) }
+      | %"return" value:!(Expr.expr)?   { Return  value }
+      | name:IDENT "(" args:!(Ostap.Util.list0)[Expr.expr] ")" 
+                                        { Call (name, args) };
+      stmt: 
+        !(Ostap.Util.expr
+          (fun x -> x)
+          [|
+            `Lefta , [ostap (";"), (fun x y -> Seq (x, y))]
+          |]
+          simple_stmt
+        );      
+      parse: stmt
     ) 
   end
 
