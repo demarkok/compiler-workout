@@ -6,8 +6,7 @@ open GT
 (* Opening a library for combinator-based syntax analysis *)
 open Ostap
 open Combinators
-(* open Option *)
-                         
+                
 (* States *)
 module State =
   struct
@@ -105,15 +104,17 @@ module Expr =
         let result                  = evalBinop op r1 r2 in
         result, (st'', i'', o'', Some result)
       | Call (f, es)        -> 
-        let (c, vs) = List.fold_left 
-          (fun (c, vs) e -> 
-            let v, c' = eval env c e in
-            (c', vs @ [v]))
-          (conf, []) 
-          es
-        in
+        let (c, vs) = eval_list env conf es in
         let ((_, _, _, Some result) as c) = env#definition env f vs c in 
         result, c
+    and eval_list env conf es = 
+      List.fold_left 
+        (fun (c, vs) e -> 
+          let v, c' = eval env c e in
+          (c', vs @ [v]))
+        (conf, []) 
+        es
+
 
         
     (* Expression parser. You can use the following terminals:
@@ -147,6 +148,8 @@ module Expr =
       parse: expr
     )
   end
+
+   
                     
 (* Simple statements: syntax and sematics *)
 module Stmt =
@@ -172,13 +175,49 @@ module Stmt =
        Takes an environment, a configuration and a statement, and returns another configuration. The 
        environment is the same as for expressions
     *)
-    let rec eval env ((st, i, o, r) as conf) k stmt = failwith "Not implemented"
-         
+    let rec eval env ((st, i, o, r) as conf) k stmt = 
+      let (<|>) a b = match b with
+        | Skip -> a
+        | _ -> Seq (a, b)
+      in
+      match stmt with
+      | Read  var                         -> 
+        let (x :: tl) = i in
+        eval env (State.update var x st, tl, o, None) Skip k
+      | Write expr                        -> 
+        let v, (st', i', o', _) = Expr.eval env conf expr in
+        eval env (st', i', o' @ [v], None) Skip k
+      | Assign (var, expr)                ->
+        let v, (st', i', o', _) = Expr.eval env conf expr in
+        eval env (State.update var v st', i', o', None) Skip k
+      | Seq (stm1, stm2)                  ->
+        eval env conf (stm2 <|> k) stm1
+      | Skip -> match k with
+        | Skip  -> conf
+        | _     -> eval env conf Skip k
+      | If (cond, thenBranch, elseBranch) -> (match (Expr.eval env conf cond) with
+        | 1, (st', i', o', _) -> eval env (st', i', o', None) k thenBranch
+        | 0, (st', i', o', _) -> eval env (st', i', o', None) k elseBranch
+        )
+      | (While (cond, body)) as loop      -> (match (Expr.eval env conf cond) with
+        | 1, (st', i', o', _) -> eval env (st', i', o', None) (loop <|> k) body
+        | 0, (st', i', o', _) -> eval env (st', i', o', None)  Skip        k
+      )
+      | Repeat (body, cond)               -> 
+        eval env conf ((While (Binop ("==", cond, Const 0), body)) <|> k) body
+      | Return mbResult                   -> (match mbResult with
+        | Some expr -> let (_, c') = Expr.eval env conf expr in c'
+        | None      -> conf
+      )
+      | Call (f, args)                    -> 
+        let (c, vs) = Expr.eval_list env conf args in
+        eval env (env#definition env f vs c) Skip k
+
+ 
     (* Statement parser *)
     ostap (
       parse: empty {failwith "Not implemented"}
-    )
-      
+    ) 
   end
 
 (* Function and procedure definitions *)
