@@ -83,6 +83,25 @@ let show instr =
 (* Opening stack machine to use instructions without fully qualified names *)
 open SM
 
+
+let safeMove a b = match a, b with
+| R i, _   ->  [Mov (a, b)]
+| _, R i -> [Mov (a, b)]
+| _, _  -> [Mov (a, eax); Mov (eax, b)]
+
+let opSuff = function
+| ">"  -> Some "g"
+| ">=" -> Some "ge"
+| "<"  -> Some "l"
+| "<=" -> Some "le"
+| "==" -> Some "e"
+| "!=" -> Some "ne"
+| _ -> None
+
+let toBit x = 
+  [Binop ("cmp", L 0, x); Mov (L 0, eax); Set ("ne", "%al"); Mov (eax, x)]
+
+
 (* Symbolic stack machine evaluator
 
      compile : env -> prg -> env * instr list
@@ -90,13 +109,86 @@ open SM
    Take an environment, a stack machine program, and returns a pair --- the updated environment and the list
    of x86 instructions
 *)
-let compile env code = failwith "Not implemented"
-                                
+let rec compile env = function
+  | [] -> env, []
+  | instr :: code -> 
+    (* Printf.printf "%s\n" (GT.transform(SM.insn) (new @SM.insn[show]) () instr); *)
+    let env, asm = match instr with
+      | CONST n ->
+          let x, env = env#allocate in    
+          env, [Mov (L n, x)]
+      | LD x ->
+          let y, env = (env#global x)#allocate in
+          env, safeMove (env#loc x) y
+      | ST x ->
+          let y, env = (env#global x)#pop in 
+          env, safeMove y (env#loc x)
+      | WRITE ->
+          let x, env = env#pop in
+          env, [Push x; Call "Lwrite"; Pop eax]
+      | READ ->
+          let x, env = env#allocate in
+          env, [Call "Lread"; Mov (eax, x)]
+      | BINOP op ->
+          let y, x, env = env#pop2 in
+          let z, env = env#allocate in 
+          env, (match op with
+          | "/"             -> [Mov (x, eax); Cltd; IDiv y; Mov (eax, z)] 
+          | "%"             -> [Mov (x, eax); Cltd; IDiv y; Mov (edx, z)]
+          | "+" | "-" | "*" -> [Mov (x, eax); Binop (op, y, eax); Mov (eax, z)]
+          | "&&" | "!!" -> toBit x @ toBit y @ [Mov (y, edx); Binop (op, x, edx); Mov (edx, z)] (* Not quite safe: x and y are spoiled*)
+          | _ -> (match opSuff op with
+            | Some suff -> [Mov (x, eax); Binop ("cmp", y, eax); Mov (L 0, edx); Set (suff, "%dl"); Mov (edx, z)]
+            | _         -> failwith "unknown binary operator"))
+      | LABEL l     -> env, [Label l]
+      | JMP l       -> env, [Jmp l]
+      | CJMP (s, l) -> 
+        let x, env = env#pop in
+        env, [Binop ("cmp", L 0, x); CJmp (s, l)]
+      | BEGIN (name, argNames, locals) ->
+        let env = env#enter name argNames locals in 
+        env, [Push ebp; Mov (esp, ebp); Binop ("-", M ("$" ^ env#lsize ), esp)]  
+      | END ->
+        env, [Label env#epilogue;
+              Mov (ebp, esp);
+              Pop ebp;
+              Ret;
+              Meta (Printf.sprintf "\t.set\t%s,\t%d" env#lsize (env#allocated * word_size))]
+      | CALL (name, nArgs, fromStmt) ->
+        let pushRegs   = List.map     (fun x -> Push x) (env#live_registers nArgs) in
+        let popRegs    = List.rev_map (fun x -> Pop  x) (env#live_registers nArgs) in 
+        let args, env  = env#rev_popn nArgs in 
+        let saveResult, env = if fromStmt then ([], env) else (let forRes, env' = env#allocate in [Mov (eax, forRes)], env') in
+        let pushArgs   = List.map     (fun x -> Push x) args in 
+        env, 
+        pushRegs      @
+        pushArgs      @
+        [Call name; Binop ("+", L (nArgs * word_size), esp)] @
+        saveResult    @
+        popRegs       
+      | RET  withValue -> match withValue with
+        | true ->
+          let v, env' = env#pop in
+          env', [Mov (v, eax); Jmp env#epilogue]
+        | false ->
+          env, [Jmp env#epilogue]
+    in 
+    let env, asm' = compile env code in 
+    env, asm @ asm'
+
 (* A set of strings *)           
 module S = Set.Make (String)
 
+let init n f =
+  let rec loop i accum =
+    if i = 0 then accum
+    else loop (i - 1) (f (i - 1) :: accum)
+  in
+  loop n []
+
+
 (* Environment implementation *)
-let make_assoc l = List.combine l (List.init (List.length l) (fun x -> x))
+let make_assoc l = List.combine l (init (List.length l) (fun x -> x))
                      
 class env =
   object (self)
@@ -116,14 +208,14 @@ class env =
     (* allocates a fresh position on a symbolic stack *)
     method allocate =    
       let x, n =
-	let rec allocate' = function
-	| []                            -> ebx     , 0
-	| (S n)::_                      -> S (n+1) , n+1
-	| (R n)::_ when n < num_of_regs -> R (n+1) , stack_slots
+    let rec allocate' = function
+    | []                            -> ebx     , 0
+    | (S n)::_                      -> S (n+1) , n+1
+    | (R n)::_ when n < num_of_regs -> R (n+1) , stack_slots
         | (M _)::s                      -> allocate' s
-	| _                             -> S 0     , 1
-	in
-	allocate' stack
+    | _                             -> S 0     , 1
+    in
+    allocate' stack
       in
       x, {< stack_slots = max n stack_slots; stack = x::stack >}
 
@@ -132,6 +224,18 @@ class env =
 
     (* pops one operand from the symbolic stack *)
     method pop = let x::stack' = stack in x, {< stack = stack' >}
+
+    (* pops n operands from the symbolic stack *)
+    method popn = function
+      | 0 -> [], self
+      | n -> 
+        let head, env = self#pop in
+        let tail, env' = env#popn (n - 1) in 
+        head :: tail, env'
+
+    method rev_popn n = 
+      let res, env = self#popn n in 
+      List.rev res, env
 
     (* pops two operands from the symbolic stack *)
     method pop2 = let x::y::stack' = stack in x, y, {< stack = stack' >}
@@ -155,9 +259,9 @@ class env =
     (* returns a name for local size meta-symbol *)
     method lsize = Printf.sprintf "L%s_SIZE" fname
 
-    (* returns a list of live registers *)
-    method live_registers =
-      List.filter (function R _ -> true | _ -> false) stack
+    (* returns a list of live registers, but skip first k ones *)
+    method live_registers k =
+      List.filter (function R _ -> true | _ -> false) (SM.drop k stack)
       
   end
   
@@ -185,4 +289,4 @@ let build prog name =
   close_out outf;
   let inc = try Sys.getenv "RC_RUNTIME" with _ -> "../runtime" in
   Sys.command (Printf.sprintf "gcc -m32 -o %s %s/runtime.o %s.s" name inc name)
- 
+  
