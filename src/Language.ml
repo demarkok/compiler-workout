@@ -7,6 +7,16 @@ open GT
 open Ostap
 open Combinators
 
+
+let list_init n f =
+  let rec loop i accum =
+    if i = 0 then accum
+    else loop (i - 1) (f (i - 1) :: accum)
+  in
+  loop n []
+
+
+
 (* Values *)
 module Value =
   struct
@@ -35,7 +45,7 @@ module Value =
     | _ -> failwith "symbolic expression expected"
 
     let update_string s i x = String.init (String.length s) (fun j -> if j = i then x else s.[j])
-    let update_array  a i x = List.init   (List.length a)   (fun j -> if j = i then x else List.nth a j)
+    let update_array  a i x = list_init   (List.length a)   (fun j -> if j = i then x else List.nth a j)
 
   end
        
