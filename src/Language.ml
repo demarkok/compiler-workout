@@ -8,6 +8,11 @@ open Ostap
 open Combinators
 
 
+let default y = function
+| Some x -> x
+| None -> y
+
+
 let list_init n f =
   let rec loop i accum =
     if i = 0 then accum
@@ -161,61 +166,105 @@ module Expr =
 
     (* The type of configuration: a state, an input stream, an output stream, an optional value *)
     type config = State.t * int list * int list * Value.t option
-                                                            
+                                
+
+
+
+    let itob i = i <> 0
+    let btoi b = if b then 1 else 0
+
+    (* string -> int -> int -> int *)
+    let evalBinop op e1 e2 = match op with
+      |"+" -> e1 + e2
+      |"-" -> e1 - e2
+      |"*" -> e1 * e2
+      |"/" -> e1 / e2
+      |"%" -> e1 mod e2
+      |">" -> btoi (e1 > e2)
+      |"<" -> btoi (e1 < e2)
+      |">=" -> btoi (e1 >= e2)
+      |"<=" -> btoi (e1 <= e2)
+      |"==" -> btoi (e1 = e2)
+      |"!=" -> btoi (e1 <> e2)
+      |"&&" -> btoi ((itob e1) && (itob e2))
+      |"!!" -> btoi ((itob e1) || (itob e2))
+
+
     (* Expression evaluator
-
-          val eval : env -> config -> t -> int * config
-
-
+          val eval : env -> config -> t -> config
        Takes an environment, a configuration and an expresion, and returns another configuration. The 
        environment supplies the following method
-
            method definition : env -> string -> int list -> config -> config
-
        which takes an environment (of the same type), a name of the function, a list of actual parameters and a configuration, 
        an returns a pair: the return value for the call and the resulting configuration
-    *)                                                       
-    let to_func op =
-      let bti   = function true -> 1 | _ -> 0 in
-      let itb b = b <> 0 in
-      let (|>) f g   = fun x y -> f (g x y) in
-      match op with
-      | "+"  -> (+)
-      | "-"  -> (-)
-      | "*"  -> ( * )
-      | "/"  -> (/)
-      | "%"  -> (mod)
-      | "<"  -> bti |> (< )
-      | "<=" -> bti |> (<=)
-      | ">"  -> bti |> (> )
-      | ">=" -> bti |> (>=)
-      | "==" -> bti |> (= )
-      | "!=" -> bti |> (<>)
-      | "&&" -> fun x y -> bti (itb x && itb y)
-      | "!!" -> fun x y -> bti (itb x || itb y)
-      | _    -> failwith (Printf.sprintf "Unknown binary operator %s" op)    
-    
-    let rec eval env ((st, i, o, r) as conf) expr = failwith "Not implemented"
-    and eval_list env conf xs =
-      let vs, (st, i, o, _) =
-        List.fold_left
-          (fun (acc, conf) x ->
-            let (_, _, _, Some v) as conf = eval env conf x in
-            v::acc, conf
-          )
-          ([], conf)
-          xs
-      in
-      (st, i, o, List.rev vs)
-         
-    (* Expression parser. You can use the following terminals:
+    *)                         
+    let rec eval env ((st, i, o, r) as conf) expr = match expr with
+      | Const c             -> (st, i, o, Some (Value.of_int c))
+      | Var x               -> let v = State.eval st x in (st, i, o, Some v)
+      | Binop (op, e1, e2)  ->
+        let (st', i', o', Some r1) as conf' = eval env conf e1 in
+        let (st'', i'', o'', Some r2)       = eval env conf' e2 in
+        let result                     = evalBinop op (Value.to_int r1) (Value.to_int r2) in
+        (st'', i'', o'', Some (Value.of_int result))
+      | Call (f, es)        -> eval_call env conf es f
+      | Array vs            -> eval_call env conf vs "$array"
+      | Elem (arr, i)       -> eval_call env conf [arr; i] "$elem"
+      | Length arr          -> eval_call env conf [arr] "$length"
+      | String str          -> (st, i, o, Some (Value.of_string str))
+      | Sexp (tag, arr)     -> 
+        let ((st, i, o, _), vs) = eval_list env conf arr in
+        (st, i, o, Some (Value.sexp tag vs))
+    and eval_list env conf es = 
+      List.fold_left 
+        (fun (c, vs) e -> 
+          let (_, _, _, Some v) as c' = eval env c e in
+          (c', vs @ [v]))
+        (conf, []) 
+        es
+    and eval_call env conf args name = 
+      let ((st, i, o, _), vs) = eval_list env conf args in
+      let c' = (st, i, o, None) in
+      env#definition env name vs c'
 
+
+    (* Expression parser. You can use the following terminals:
          IDENT   --- a non-empty identifier a-zA-Z[a-zA-Z0-9_]* as a string
          DECIMAL --- a decimal constant [0-9]+ as a string                                                                                                                  
     *)
-    ostap (                                      
-      parse: empty {failwith "Not implemented"}
-    )
+    let opList2ExprOstapList opList = List.map (fun s -> (ostap($(s)), fun x y -> Binop (s, x, y))) opList
+    
+    ostap (
+      expr:
+        !(Ostap.Util.expr
+           (fun x -> x)
+           [|
+             `Lefta , opList2ExprOstapList ["!!"];
+             `Lefta , opList2ExprOstapList ["&&"];
+             `Nona  , opList2ExprOstapList ["!="; "=="; "<="; ">="; "<"; ">"];
+             `Lefta , opList2ExprOstapList ["+"; "-"];
+             `Lefta , opList2ExprOstapList ["*"; "/"; "%"]
+           |]
+           primary
+         );
+
+      base:
+        name:IDENT -"(" args:!(Ostap.Util.list0)[expr] -")" { Call (name, args) }
+      | x:IDENT { Var x } 
+      | -"[" elems:!(Ostap.Util.list0)[expr] -"]" { Array elems }
+      | s:STRING { String (String.sub s 1 (String.length s - 2)) }
+      | c:CHAR    { Const (Char.code c)}
+      | n:DECIMAL { Const n } 
+      | "`" tag:IDENT arr:(-"(" !(Ostap.Util.list0)[expr] -")")? { Sexp (tag, default [] arr) };
+                                        
+      elem: 
+        arr:base indexes:(-"[" expr -"]")* { List.fold_left (fun a i -> Elem (a, i)) arr indexes };
+
+      primary:
+        x:elem l:("." %"length")? { match l with Some _ -> Length x | None -> x }
+      | -"(" expr -")";
+
+      parse: expr
+    ) 
     
   end
                     
