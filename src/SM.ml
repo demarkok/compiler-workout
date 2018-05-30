@@ -89,7 +89,7 @@ let rec eval env ((cstack, stack, ((st, i, o) as c)) as conf) = function
     | STA (arr, n) ->
         let (x :: stack) = stack in
         (* let (indexes, stack) = split n stack *)
-        let indexes = take n stack in
+        let indexes = List.rev (take n stack) in
         let stack = drop n stack in
         eval env (cstack, stack, (Language.Stmt.update st arr x indexes, i, o)) rest
     | CALL (name, args, from_stmt) -> 
@@ -104,7 +104,7 @@ let rec eval env ((cstack, stack, ((st, i, o) as c)) as conf) = function
       | [] -> conf)
     | BEGIN (_, argNames, locals) -> 
       let update' (state, (h :: tl)) x = (State.update x h state, tl) in 
-      let (state', stack') = List.fold_left update' (Language.State.enter st (argNames @ locals), stack) argNames in
+      let (state', stack') = List.fold_left update' (Language.State.enter st (argNames @ locals), stack) (List.rev argNames) in
       eval env (cstack, stack', (state', i, o)) rest
     | SEXP (tag, args) ->
       let (values, stack) = split args stack in
@@ -134,8 +134,8 @@ let rec eval env ((cstack, stack, ((st, i, o) as c)) as conf) = function
    Takes a program, an input stream, and returns an output stream this program calculates
 *)
 let run p i =
-(*   print_prg p;
-  Printf.printf "\n\n\n"; *)
+  (* print_prg p; *)
+  (* Printf.printf "\n\n\n";  *)
   let module M = Map.Make (String) in
   let rec make_map m = function
   | []              -> m
@@ -186,7 +186,7 @@ let compile (defs, p) =
     | Language.Expr.Var var -> [LD var]
     | Language.Expr.Binop (op, e1, e2) -> exprCompile e1 @ exprCompile e2 @ [BINOP op]
     | Language.Expr.Call (name, args) ->  
-        List.concat (List.rev_map exprCompile args) @
+        List.concat (List.map exprCompile args) @
         [CALL (funLabel name, List.length args, false)]
     | Language.Expr.Array arr -> 
         List.concat (List.map exprCompile arr) @
@@ -200,7 +200,7 @@ let compile (defs, p) =
     | Language.Stmt.Seq (stm1, stm2) -> compile' stm1 @ compile' stm2
     | Language.Stmt.Assign (var, [], expr) -> exprCompile expr @ [ST var]
     | Language.Stmt.Assign (var, indexes, expr) ->
-        List.concat (List.rev_map exprCompile indexes) @
+        (List.concat (List.map exprCompile indexes)) @
         exprCompile expr @ 
         [STA (var, List.length indexes)]
     | Language.Stmt.Skip -> []
