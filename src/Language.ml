@@ -207,9 +207,9 @@ module Expr =
         let result                     = evalBinop op (Value.to_int r1) (Value.to_int r2) in
         (st'', i'', o'', Some (Value.of_int result))
       | Call (f, es)        -> eval_call env conf es f
-      | Array vs            -> eval_call env conf vs "$array"
-      | Elem (arr, i)       -> eval_call env conf [arr; i] "$elem"
-      | Length arr          -> eval_call env conf [arr] "$length"
+      | Array vs            -> eval_call env conf vs ".array"
+      | Elem (arr, i)       -> eval_call env conf [arr; i] ".elem"
+      | Length arr          -> eval_call env conf [arr] ".length"
       | String str          -> (st, i, o, Some (Value.of_string str))
       | Sexp (tag, arr)     -> 
         let ((st, i, o, _), vs) = eval_list env conf arr in
@@ -285,7 +285,12 @@ module Stmt =
 
         (* Pattern parser *)                                 
         ostap (
-          parse: empty {failwith "Not implemented"}
+          pattern:
+            %"_" { Wildcard }
+          | "`" tag:IDENT arr:(-"(" !(Ostap.Util.list0)[pattern] -")")? { Sexp (tag, default [] arr) }
+          | x:IDENT { Ident x };
+
+          parse: pattern
         )
         
         let vars p =
@@ -325,12 +330,113 @@ module Stmt =
       in
       State.update x (match is with [] -> v | _ -> update (State.eval st x) v is) st
 
-    let rec eval env ((st, i, o, r) as conf) k stmt = failwith "Not implemented"
-                                                        
+    let rec eval env ((st, i, o, r) as conf) k stmt = 
+      let (<|>) a b = match b with
+        | Skip -> a
+        | _ -> Seq (a, b)
+      in
+      (* Printf.printf "%s\n\n" (GT.transform(t) (new @t[show]) () stmt); *)
+      match stmt with
+        | Assign (var, indexes, expr)       ->
+          let conf, indexes = Expr.eval_list env conf indexes in
+          let (st', i', o', Some v) = Expr.eval env conf expr in
+          eval env (update st var v indexes, i', o', None) Skip k
+        | Seq (stm1, stm2)                  ->
+          eval env conf (stm2 <|> k) stm1
+        | Skip                              -> (match k with
+          | Skip  -> conf
+          | _     -> eval env conf Skip k
+        )
+        | If (cond, thenBranch, elseBranch) -> 
+          let (st', i', o', Some v) = Expr.eval env conf cond in (match (Value.to_int v) with
+          | 1 -> eval env (st', i', o', None) k thenBranch
+          | 0 -> eval env (st', i', o', None) k elseBranch
+          )
+        | (While (cond, body)) as loop      -> 
+          let (st', i', o', Some v) = Expr.eval env conf cond in (match (Value.to_int v) with
+            | 1 -> eval env (st', i', o', None) (loop <|> k) body
+            | 0 -> eval env (st', i', o', None)  Skip        k
+          )
+        | Repeat (body, cond)               -> 
+          eval env conf ((While (Binop ("==", cond, Const 0), body)) <|> k) body
+        | Return mbResult                   -> (match mbResult with
+          | Some expr -> Expr.eval env conf expr
+          | None      -> conf
+        )
+        | Call (f, args)                    -> 
+          let (c, vs) = Expr.eval_list env conf args in
+          eval env (env#definition env f vs c) Skip k 
+        | Leave                             -> eval env (State.drop st, i, o, None) Skip k
+        | Case (to_match, branches)                 ->
+          let (st, i, o, Some to_match) = Expr.eval env conf to_match in
+          let rec match_one_pattern obj pat = (match pat with
+            | Pattern.Wildcard      -> Some []
+            | Pattern.Ident var     -> Some [(var, obj)]
+            | Pattern.Sexp (tag0, pats) -> (match obj with
+              | Value.Sexp (tag1, objs)
+                when (tag0 = tag1 && List.length pats = List.length objs) ->
+                  let f r o p = match (r, match_one_pattern o p) with
+                  | (Some lr, Some ln) -> Some (lr @ ln)
+                  | _ -> None
+                  in List.fold_left2 f (Some []) objs pats
+              | _ -> None
+            )
+          ) in 
+          let rec match_patterns = function
+            | [] -> failwith "Pattern matching failed"
+            | ((pat, body)::tail) -> (match (match_one_pattern to_match pat) with
+              | None -> match_patterns tail
+              | Some bindings ->
+                let st' = List.fold_left (fun sc (x, v) -> State.bind x v sc) State.undefined bindings in
+                let names = List.map fst bindings in 
+                eval env (State.push st st' names, i, o, None) k (body <|> Leave)
+            ) 
+          in
+          match_patterns branches 
+
+
     (* Statement parser *)
     ostap (
-      parse: empty {failwith "Not implemented"}
-    )
+      simple_stmt:
+        x:IDENT indexes:(-"[" !(Expr.expr) -"]")* ":=" e:!(Expr.expr)  { Assign (x, indexes, e) }
+      | %"skip"                         { Skip }
+      | %"if" cond:!(Expr.expr) %"then" 
+          thenBranch:stmt
+        elifBranches:(%"elif" !(Expr.expr) %"then" stmt)*
+        elseBranch:(%"else" stmt)?
+        %"fi"                           { If (cond, 
+                                             thenBranch, 
+                                             List.fold_right (fun (c, b) e -> If (c, b, e)) elifBranches (default Skip elseBranch))
+                                        }     
+      | %"while" cond:!(Expr.expr) %"do"
+          body:stmt
+        %"od"                           { While (cond, body) }
+      | %"repeat" 
+          body:stmt 
+        %"until" cond:!(Expr.expr)      { Repeat (body, cond) }
+      | %"for" init:stmt "," cond:!(Expr.expr) "," update:stmt %"do"
+          body:stmt
+        %"od"                           { Seq (init, While (cond, Seq (body, update))) }
+      | %"return" value:!(Expr.expr)?   { Return  value }
+      | name:IDENT "(" args:!(Ostap.Util.list0)[Expr.expr] ")" 
+                                        { Call (name, args) }
+      | %"case" v:!(Expr.expr) %"of" 
+          branches:!(Util.list0By)[ostap("|")][branch] 
+        %"esac"                         { Case (v, branches) };
+
+      branch:
+        !(Pattern.pattern) -"->" stmt;
+      
+      stmt: 
+        !(Ostap.Util.expr
+          (fun x -> x)
+          [|
+            `Lefta , [ostap (";"), (fun x y -> Seq (x, y))]
+          |]
+          simple_stmt
+        );      
+      parse: stmt
+    ) 
       
   end
 
