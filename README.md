@@ -1,4 +1,5 @@
 # Compiler for a fictional programming language
+Supplementary repository for compiler course.
 
 ## Building
 
