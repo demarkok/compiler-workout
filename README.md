@@ -1,5 +1,6 @@
 # Compiler for a fictional programming language
-Supplementary repository for compiler course.
+Supplementary repository for compiler course. 
+An interpreter and X86-compiler 
 
 ## Building
 
