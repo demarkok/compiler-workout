@@ -35,8 +35,7 @@ fun fib (n) local r {
 n := read();
 
 fib(n);
-write (result);
-
+write (result)
 ```
 
 ### Sum of the list
