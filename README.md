@@ -34,11 +34,9 @@ fun fib (n) local r {
 
 n := read();
 
-for i := n, i >= 1, i := i-1 do
-  fib (i);
-  write (i);
-  write (result)
-od
+fib(n);
+write (result);
+
 ```
 
 ### Sum of the list
