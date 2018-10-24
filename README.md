@@ -32,7 +32,7 @@ fun fib (n) local r {
   fi
 }
 
-n = read();
+n := read();
 
 for i := n, i >= 1, i := i-1 do
   fib (i);
