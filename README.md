@@ -13,7 +13,7 @@ Prerequisites: ocaml [http://ocaml.org], opam [http://opam.ocaml.org].
 * `eval $(opam config env)`
 * To build the sources: `make` from the top project directory
 * To test: `test.sh` from `regression` subfolder
-* To compile: `src/rc.opt source_name.expr`
+* To compile: `rc.opt source_name.expr` from `src` subfolder
 
 ## Syntax example
 Language is pretty simple but includes all the basic constructions such as loops, functions, procedures, arrays, strings, pattern matching.
